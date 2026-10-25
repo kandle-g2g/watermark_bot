@@ -68,7 +68,7 @@ def apply_watermark(data: bytes) -> bytes:
 
     m = int(img.width * MARGIN)
     # paste с маской вместо alpha_composite: не создаём полноразмерные слои (экономия памяти на 512 МБ)
-    img.paste(wm, (img.width - w - m, img.height - h - m), wm)
+    img.paste(wm, (m, img.height - h - m), wm)  # нижний левый угол
 
     buf = io.BytesIO()
     img.save(buf, "JPEG", quality=JPEG_QUALITY)

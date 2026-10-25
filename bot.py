@@ -1,6 +1,8 @@
 import asyncio
 import io
+import logging
 import os
+import sys
 import threading
 import time
 
@@ -20,6 +22,11 @@ SCALE = 0.15     # ширина вотермарки = 15% ширины фото
 MARGIN = 0.02    # отступ от края = 2% ширины фото
 OPACITY = 0.7    # 1.0 = непрозрачная
 JPEG_QUALITY = 95
+
+# Логи сразу, без буферизации (иначе print в Render может появиться с задержкой или не появиться)
+sys.stdout.reconfigure(line_buffering=True)
+logging.basicConfig(format="%(asctime)s %(name)s %(levelname)s %(message)s", level=logging.INFO)
+logging.getLogger("httpx").setLevel(logging.WARNING)  # на INFO httpx пишет в лог URL вместе с токеном
 
 # ---------- Flask для healthcheck (как в Covr-боте) ----------
 flask_app = Flask(__name__)
@@ -75,18 +82,33 @@ def allowed(update: Update) -> bool:
 
 # ---------- Обработчики ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not allowed(update):
-        return
+    # Отвечает всем, даже если ID нет в ALLOWED_IDS — это проверка, что бот жив
+    user = update.effective_user
+    uid = user.id if user else "unknown"
+    access = "allowed" if allowed(update) else "NOT allowed (add this ID to ALLOWED_IDS)"
+    print(f"📩 /start from {uid}, access: {access}")
     await update.message.reply_text(
+        "✅ Bot is running\n"
+        f"Your ID: {uid}\n"
+        f"Access: {access}\n\n"
         "Send me photos — I'll add the watermark and send them back.\n"
         "Send as a file (without compression) to keep full quality."
     )
 
 
+async def deny(update: Update):
+    user = update.effective_user
+    await update.message.reply_text(f"⛔ No access. Your ID: {user.id if user else 'unknown'}")
+
+
 async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not allowed(update) or not update.message:
+    if not update.message:
+        return
+    if not allowed(update):
+        await deny(update)
         return
     msg = update.message
+    print("📩 Photo received")
     try:
         file = await msg.photo[-1].get_file()  # самый большой размер
         data = bytes(await file.download_as_bytearray())
@@ -99,9 +121,13 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not allowed(update) or not update.message:
+    if not update.message:
+        return
+    if not allowed(update):
+        await deny(update)
         return
     msg = update.message
+    print("📩 Document received")
     try:
         file = await msg.document.get_file()
         data = bytes(await file.download_as_bytearray())
@@ -116,12 +142,25 @@ async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ---------- Запуск polling с автоматическим перезапуском ----------
+def check_token():
+    """Проверяет токен через getMe. В лог не пишем текст исключений requests — в них бывает токен."""
+    try:
+        data = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getMe", timeout=10).json()
+        if data.get("ok"):
+            print(f"✅ Token OK, bot: @{data['result']['username']}")
+        else:
+            print(f"❌ Telegram rejected the token: {data.get('description')}")
+    except Exception as e:
+        print(f"❌ getMe failed: {type(e).__name__}")
+
+
 def run_polling_with_retry():
+    check_token()
     try:
         requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook", timeout=10)
         print("✅ Webhook deleted")
     except Exception as e:
-        print(f"Failed to delete webhook: {e}")
+        print(f"Failed to delete webhook: {type(e).__name__}")
 
     while True:
         try:

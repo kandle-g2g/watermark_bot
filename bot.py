@@ -12,16 +12,23 @@ from PIL import Image, ImageOps
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
+# ============================================================
+#  НАСТРОЙКИ ВОТЕРМАРКИ — правьте здесь
+#  Все значения — доли ШИРИНЫ фото (0.01 = 1% ширины), одинаково для любой ориентации.
+# ============================================================
+SCALE = 0.15      # размер: ширина вотермарки (0.15 = 15% ширины фото)
+MARGIN_X = 0.03   # отступ от ЛЕВОГО края (больше — правее)
+MARGIN_Y = 0.01   # отступ от НИЖНЕГО края (меньше — ниже, 0 — вплотную к краю)
+OPACITY = 0.7     # прозрачность: 1.0 — непрозрачная, 0.5 — полупрозрачная
+JPEG_QUALITY = 95
+# ============================================================
+
 # ---------- Конфигурация ----------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 # Необязательно: список Telegram ID через запятую. Если пусто — бот отвечает всем.
 ALLOWED_IDS = {int(x) for x in os.getenv("ALLOWED_IDS", "").split(",") if x.strip()}
 
 WATERMARK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "watermark.png")
-SCALE = 0.15     # ширина вотермарки = 15% ширины фото
-MARGIN = 0.02    # отступ от края = 2% ширины фото
-OPACITY = 0.7    # 1.0 = непрозрачная
-JPEG_QUALITY = 95
 
 # Логи сразу, без буферизации (иначе print в Render может появиться с задержкой или не появиться)
 sys.stdout.reconfigure(line_buffering=True)
@@ -66,9 +73,10 @@ def apply_watermark(data: bytes) -> bytes:
     wm = WATERMARK.resize((w, h), Image.Resampling.LANCZOS)
     wm.putalpha(wm.getchannel("A").point(lambda p: int(p * OPACITY)))
 
-    m = int(img.width * MARGIN)
+    x = int(img.width * MARGIN_X)
+    y = img.height - h - int(img.width * MARGIN_Y)
     # paste с маской вместо alpha_composite: не создаём полноразмерные слои (экономия памяти на 512 МБ)
-    img.paste(wm, (m, img.height - h - m), wm)  # нижний левый угол
+    img.paste(wm, (x, y), wm)  # нижний левый угол
 
     buf = io.BytesIO()
     img.save(buf, "JPEG", quality=JPEG_QUALITY)
